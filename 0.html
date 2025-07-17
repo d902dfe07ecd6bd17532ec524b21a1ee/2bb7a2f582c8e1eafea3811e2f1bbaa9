@@ -92,6 +92,13 @@
       -webkit-user-drag: none;
     }
 
+    .error-placeholder {
+      color: red;
+      font-size: 16px;
+      text-align: center;
+      margin: 20px;
+    }
+
     #scroll-track {
       position: fixed;
       right: 10px;
@@ -147,10 +154,11 @@
   <div id="page-indicator"></div>
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.7.76/pdf.min.mjs" type="module"></script>
 
-  <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  <script type="module">
+    import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.7.76/pdf.min.mjs';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.7.76/pdf.worker.min.mjs';
 
     // Заглушка для Telegram Web App
     if (!window.Telegram) {
@@ -217,25 +225,24 @@
         console.log(`Рендеринг страницы ${pageNum}`);
         const startTime = performance.now();
         const page = await pdf.getPage(pageNum);
-        const containerWidth = scrollable.clientWidth;
-        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 1.0); // Увеличенный масштаб
+        const containerWidth = scrollable.clientWidth || 300; // Резервная ширина
+        const defaultViewport = page.getViewport({ scale: 1 });
+        console.log(`Размеры страницы ${pageNum}: ${defaultViewport.width}x${defaultViewport.height}`);
+
+        if (defaultViewport.width === 0 || defaultViewport.height === 0) {
+          throw new Error(`Страница ${pageNum} имеет нулевые размеры`);
+        }
+
+        const scale = Math.min(containerWidth / defaultViewport.width, 1.0);
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-
         console.log(`Размеры canvas для страницы ${pageNum}: ${canvas.width}x${canvas.height}`);
 
         const renderTask = page.render({ canvasContext: context, viewport });
         await renderTask.promise;
-
-        // Проверка, заполнен ли canvas
-        const imageData = context.getImageData(0, 0, canvas.width, canvas.height).data;
-        const isCanvasEmpty = Array.from(imageData).every(val => val === 0);
-        if (isCanvasEmpty) {
-          throw new Error(`Canvas для страницы ${pageNum} пустой`);
-        }
 
         const imgData = canvas.toDataURL('image/jpeg', 0.8);
         console.log(`Размер data:URL для страницы ${pageNum}: ${(imgData.length / 1024).toFixed(2)} КБ`);
@@ -257,11 +264,11 @@
         canvas.width = 0;
         canvas.height = 0;
 
-        // Проверка загрузки изображения
         img.onload = () => console.log(`Изображение страницы ${pageNum} успешно загружено в <img>`);
         img.onerror = () => {
           console.error(`Ошибка загрузки изображения страницы ${pageNum}`);
           updateLoadingStatus(null, `🟡 Ошибка отображения страницы ${pageNum}`);
+          wrapper.innerHTML = `<div class="error-placeholder">Не удалось загрузить страницу ${pageNum}</div>`;
         };
 
         console.log(`Страница ${pageNum} отрендерена за ${(performance.now() - startTime).toFixed(2)} мс`);
@@ -300,23 +307,29 @@
         updateLoadingStatus(null, '⏳ Обработка PDF...');
         pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
         total = pdfDoc.numPages;
+        console.log(`PDF содержит ${total} страниц`);
+
         wrappers = [];
         scrollable.innerHTML = '';
 
-        updateLoadingStatus(null, `⏳ Рендеринг страницы 1 из ${total}`);
-        let firstWrapper = await renderPage(pdfDoc, 1);
-        if (!firstWrapper && total > 1) {
-          console.log('Первая страница не отрендерилась, пробуем вторую...');
-          updateLoadingStatus(null, `⏳ Рендеринг страницы 2 из ${total}`);
-          firstWrapper = await renderPage(pdfDoc, 2);
+        let firstWrapper = null;
+        let attempt = 1;
+        while (!firstWrapper && attempt <= Math.min(total, 3)) {
+          updateLoadingStatus(null, `⏳ Рендеринг страницы ${attempt} из ${total}`);
+          firstWrapper = await renderPage(pdfDoc, attempt);
+          if (!firstWrapper) {
+            console.log(`Страница ${attempt} не отрендерилась, пробуем следующую...`);
+            attempt++;
+          }
         }
+
         if (!firstWrapper) {
-          throw new Error('Не удалось отрендерить начальную страницу');
+          throw new Error('Не удалось отрендерить ни одну из первых страниц');
         }
 
         scrollable.appendChild(firstWrapper);
         wrappers.push(firstWrapper);
-        console.log('Начальная страница добавлена в DOM');
+        console.log(`Страница ${attempt} добавлена в DOM`);
 
         loadingScreen.style.display = 'none';
         scrollable.style.display = 'flex';

@@ -136,7 +136,6 @@
   </style>
 </head>
 <body>
-
   <div class="loading-wrapper" id="loading-screen">
     <img class="loading-logo" src="https://cdn4.cdn-telegram.org/file/VJsUqPLWZiucMadLzaEyH2fXS11bZ2hgTZQlUl-sWrmPpODM3CUM6Z4NtxsRtdVoTFtVmQW_dRh2zhb1aRdHcrqKv-wtuTWoejBFqH5e50Smqti2_9wpO9zPkcHOSZrNy1aRTKhMRUWlIKVr6c8BCe1w41lFH-wnfB2tEsR9XiYqnEAGEucU7I_LfnOKRpBtUz79t9-flwdOCMqH9iWb7pPWQ_oDOJzNApX3KsSc8BFvsTa51YyPeaOVhzmQ_KqiNM_368pAGsXAzTn7ZzdofrqtY4666jLVHl-lmgkFbprHFmIKElqd6luHuAhbBSav4ZamurKQzoNCAzcusBz13A.jpg" />
     <div class="loading-title">Gojo Manga Bot</div>
@@ -150,10 +149,12 @@
   <div id="page-indicator"></div>
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="https://mozilla.github.io/pdf.js/build/pdf.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
   <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://mozilla.github.io/pdf.js/build/pdf.worker.min.js';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // Заглушка для Telegram Web App, если не в Telegram
     if (!window.Telegram) {
       window.Telegram = {
         WebApp: {
@@ -177,7 +178,7 @@
     const thumb = track.querySelector('.thumb');
     const pageInd = document.getElementById('page-indicator');
 
-    let wrappers = [], total = 0, trackHideTimeout, indicatorHideTimeout, ticking = false;
+    let wrappers = [], total = 0, trackHideTimeout, indicatorHideTimeout, ticking = false, pdfDoc = null;
 
     function updateVh() {
       document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
@@ -215,7 +216,9 @@
 
     async function renderPage(pdf, pageNum) {
       const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 0.8 });
+      const containerWidth = scrollable.clientWidth;
+      const scale = containerWidth / page.getViewport({ scale: 1 }).width; // Адаптивный масштаб
+      const viewport = page.getViewport({ scale: Math.min(scale, 1.0) });
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       canvas.width = viewport.width;
@@ -225,11 +228,15 @@
 
       const wrapper = document.createElement('div');
       const img = document.createElement('img');
-      img.src = canvas.toDataURL('image/png');
+      img.src = canvas.toDataURL('image/jpeg', 0.8); // Используем JPEG с сжатием
       img.className = 'chapter-photo';
       img.alt = `Страница ${pageNum}`;
       img.loading = 'lazy';
       wrapper.appendChild(img);
+
+      // Очистка canvas для освобождения памяти
+      canvas.width = 0;
+      canvas.height = 0;
 
       return wrapper;
     }
@@ -241,7 +248,7 @@
       }
 
       try {
-        updateLoadingStatus(null, '⏳ Загрузка главы ...');
+        updateLoadingStatus(null, '⏳ Загрузка главы...');
 
         const response = await fetch(site_url, {
           method: 'POST',
@@ -251,35 +258,46 @@
           body: JSON.stringify({ cookie, user_id, title_id, chapter_number })
         });
 
-        if (!response.ok) throw new Error();
+        if (!response.ok) throw new Error(`HTTP ошибка: ${response.status}`);
 
         const pdfBytes = await response.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
-
-        total = pdf.numPages;
+        pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+        total = pdfDoc.numPages;
         wrappers = [];
         scrollable.innerHTML = '';
 
-        const batchSize = 3;
-        for (let i = 1; i <= total; i += batchSize) {
-          const batchPromises = [];
-          for (let j = i; j < i + batchSize && j <= total; j++) {
-            batchPromises.push(renderPage(pdf, j));
-          }
-          const batchWrappers = await Promise.all(batchPromises);
-          batchWrappers.forEach(wrapper => {
-            scrollable.appendChild(wrapper);
-            wrappers.push(wrapper);
-          });
-        }
+        // Рендерим только первую страницу
+        const firstWrapper = await renderPage(pdfDoc, 1);
+        scrollable.appendChild(firstWrapper);
+        wrappers.push(firstWrapper);
 
         loadingScreen.style.display = 'none';
         scrollable.style.display = 'flex';
         updateThumb();
         showPageIndicator();
 
+        // Настройка Intersection Observer для ленивой загрузки
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(async (entry) => {
+            if (entry.isIntersecting && wrappers.length < total) {
+              const nextPage = wrappers.length + 1;
+              if (nextPage <= total) {
+                updateLoadingStatus(null, `⏳ Рендеринг страницы ${nextPage} из ${total}`);
+                const wrapper = await renderPage(pdfDoc, nextPage);
+                scrollable.appendChild(wrapper);
+                wrappers.push(wrapper);
+                updateThumb();
+                showPageIndicator();
+              }
+            }
+          });
+        }, { root: scrollable, threshold: 0.1 });
+
+        // Наблюдаем за последним элементом
+        observer.observe(wrappers[wrappers.length - 1]);
+
       } catch (err) {
-        updateLoadingStatus(null, '🟡 Ошибка загрузки главы');
+        updateLoadingStatus(null, `🟡 Ошибка загрузки главы: ${err.message}`);
       }
     }
 
@@ -326,6 +344,7 @@
       if (!ticking) {
         requestAnimationFrame(() => {
           updateThumb();
+          showPageIndicator();
           ticking = false;
         });
         ticking = true;

@@ -214,61 +214,73 @@
     }
   }
 
-  async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
-    if (status !== 'success') {
-      updateLoadingStatus(status);
-      return;
-    }
-
-    try {
-      updateLoadingStatus(null, '⏳ Загрузка главы ...');
-
-      const response = await fetch(site_url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ cookie, user_id, title_id, chapter_number })
-      });
-
-      if (!response.ok) throw new Error();
-
-      const pdfBytes = await response.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
-
-      total = pdf.numPages;
-      wrappers = [];
-      scrollable.innerHTML = '';
-
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 2 });
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-
-        await page.render({ canvasContext: context, viewport }).promise;
-
-        const wrapper = document.createElement('div');
-        const img = document.createElement('img');
-        img.src = canvas.toDataURL('image/png');
-        img.className = 'chapter-photo';
-        img.alt = `Страница ${pageNum}`;
-        wrapper.appendChild(img);
-        scrollable.appendChild(wrapper);
-        wrappers.push(wrapper);
-      }
-
-      loadingScreen.style.display = 'none';
-      scrollable.style.display = 'flex';
-      updateThumb();
-      showPageIndicator();
-
-    } catch (err) {
-      updateLoadingStatus(null, '🟡 Ошибка загрузки главы');
-    }
+async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
+  if (status !== 'success') {
+    updateLoadingStatus(status);
+    return;
   }
+
+  try {
+    updateLoadingStatus(null, '⏳ Загрузка главы ...');
+
+    const response = await fetch(site_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookie, user_id, title_id, chapter_number }),
+    });
+
+    if (!response.ok) throw new Error();
+
+    const pdfBytes = await response.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+
+    total = pdf.numPages;
+    wrappers = [];
+    scrollable.innerHTML = '';
+
+    // Рендерим все страницы параллельно
+    const renderPromises = [];
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      renderPromises.push(
+        pdf.getPage(pageNum).then(async (page) => {
+          const viewport = page.getViewport({ scale: 2 });
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+
+          await page.render({ canvasContext: context, viewport }).promise;
+
+          const wrapper = document.createElement('div');
+          const img = document.createElement('img');
+          img.src = canvas.toDataURL('image/png');
+          img.className = 'chapter-photo';
+          img.alt = `Страница ${pageNum}`;
+          wrapper.appendChild(img);
+
+          return { pageNum, wrapper };
+        })
+      );
+    }
+
+    const renderedPages = await Promise.all(renderPromises);
+    // Сортируем по номеру страницы (на всякий случай)
+    renderedPages.sort((a, b) => a.pageNum - b.pageNum);
+
+    renderedPages.forEach(({ wrapper }) => {
+      scrollable.appendChild(wrapper);
+      wrappers.push(wrapper);
+    });
+
+    loadingScreen.style.display = 'none';
+    scrollable.style.display = 'flex';
+    updateThumb();
+    showPageIndicator();
+
+  } catch (err) {
+    updateLoadingStatus(null, '🟡 Ошибка загрузки главы');
+  }
+}
 
   function updateThumb() {
     const scrollHeight = scrollable.scrollHeight - scrollable.clientHeight;

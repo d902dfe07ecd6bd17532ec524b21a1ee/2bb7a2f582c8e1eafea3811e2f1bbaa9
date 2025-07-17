@@ -9,7 +9,6 @@
       --box-bg: #ffffff;
       --accent-link-color: #0088cc;
     }
-
     body {
       font-family: Arial, sans-serif;
       margin: 0;
@@ -20,7 +19,6 @@
       align-items: center;
       min-height: 100vh;
     }
-
     .loading-wrapper {
       position: fixed;
       top: 50%;
@@ -39,24 +37,20 @@
       text-align: center;
       z-index: 9999;
     }
-
     .loading-logo {
       width: 96px;
       height: 96px;
       border-radius: 50%;
       object-fit: cover;
     }
-
     .loading-title {
       font-size: 20px;
       font-weight: bold;
     }
-
     .loading-extra {
       font-size: 14px;
       color: #555;
     }
-
     .loading-text {
       font-size: 16px;
       color: #555;
@@ -64,11 +58,9 @@
       margin-top: 12px;
       transition: color 0.3s ease;
     }
-
     .loading-text.success { color: green; }
     .loading-text.blocked { color: red; }
     .loading-text.chapters_no { color: #800080; }
-
     .photo-container {
       display: none;
       padding: 0 12px;
@@ -83,7 +75,6 @@
       box-sizing: border-box;
       margin: 16px 0;
     }
-
     .chapter-photo {
       display: block;
       margin: 0;
@@ -93,7 +84,6 @@
       -webkit-user-drag: none;
       pointer-events: none;
     }
-
     #scroll-track {
       position: fixed;
       right: 10px;
@@ -106,7 +96,6 @@
       transition: opacity 0.3s;
       z-index: 1000;
     }
-
     .thumb {
       position: absolute;
       width: 100%;
@@ -115,7 +104,6 @@
       top: 0;
       left: 0;
     }
-
     #page-indicator {
       position: fixed;
       bottom: 20px;
@@ -178,9 +166,6 @@
     const pageInd = document.getElementById('page-indicator');
 
     let wrappers = [], total = 0, trackHideTimeout, indicatorHideTimeout, ticking = false;
-    let pdfDoc = null;
-    let currentPage = 1;
-    const pagesPerBatch = 3;
 
     function updateVh() {
       document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
@@ -216,9 +201,10 @@
       }
     }
 
-    async function renderPage(pdf, pageNum) {
+    // Рендер одной страницы, возвращает Promise
+    async function renderPage(pdf, pageNum, scale = 0.7) {
       const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 1 }); // уменьшенный масштаб
+      const viewport = page.getViewport({ scale });
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       canvas.width = viewport.width;
@@ -231,18 +217,19 @@
       img.src = canvas.toDataURL('image/png');
       img.className = 'chapter-photo';
       img.alt = `Страница ${pageNum}`;
+      img.loading = 'lazy';  // ленивый загрузчик
       wrapper.appendChild(img);
       scrollable.appendChild(wrapper);
       wrappers.push(wrapper);
     }
 
-    async function loadBatch() {
-      if (!pdfDoc) return;
-      for (let i = 0; i < pagesPerBatch && currentPage <= total; i++, currentPage++) {
-        await renderPage(pdfDoc, currentPage);
+    // Загружаем страницы пакетами (параллельно)
+    async function loadBatch(pdf, startPage, batchSize) {
+      const promises = [];
+      for (let i = startPage; i < startPage + batchSize && i <= total; i++) {
+        promises.push(renderPage(pdf, i));
       }
-      updateThumb();
-      showPageIndicator();
+      await Promise.all(promises);
     }
 
     async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
@@ -265,17 +252,21 @@
         if (!response.ok) throw new Error();
 
         const pdfBytes = await response.arrayBuffer();
-        pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
 
-        total = pdfDoc.numPages;
+        total = pdf.numPages;
         wrappers = [];
-        currentPage = 1;
         scrollable.innerHTML = '';
 
-        await loadBatch();
+        const batchSize = 3;  // параллельных страниц за раз
+        for (let pageNum = 1; pageNum <= total; pageNum += batchSize) {
+          await loadBatch(pdf, pageNum, batchSize);
+        }
 
         loadingScreen.style.display = 'none';
         scrollable.style.display = 'flex';
+        updateThumb();
+        showPageIndicator();
 
       } catch (err) {
         updateLoadingStatus(null, '🟡 Ошибка загрузки главы');
@@ -334,13 +325,6 @@
       trackHideTimeout = setTimeout(() => {
         track.style.opacity = 0;
       }, 800);
-
-      // Ленивая загрузка новых страниц при скролле почти до конца
-      if (scrollable.scrollHeight - scrollable.scrollTop - scrollable.clientHeight < 200) {
-        if (currentPage <= total) {
-          loadBatch();
-        }
-      }
     });
 
     document.querySelectorAll('a').forEach(a => a.addEventListener('click', e => e.preventDefault()));
@@ -358,12 +342,13 @@
       }
 
       updateLoadingStatus(status);
+
       if (status === 'success') {
         fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
       }
     }
 
-    document.addEventListener('DOMContentLoaded', init);
+    window.onload = init;
   </script>
 </body>
 </html>

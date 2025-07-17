@@ -217,9 +217,10 @@
     async function renderPage(pdf, pageNum) {
       try {
         console.log(`Рендеринг страницы ${pageNum}`);
+        const startTime = performance.now();
         const page = await pdf.getPage(pageNum);
         const containerWidth = scrollable.clientWidth;
-        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 1.0);
+        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 0.8); // Уменьшенный масштаб для первой страницы
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
@@ -229,7 +230,7 @@
         await page.render({ canvasContext: context, viewport }).promise;
 
         const wrapper = document.createElement('div');
-        wrapper.dataset.pageNum = pageNum; // Для отслеживания страницы
+        wrapper.dataset.pageNum = pageNum;
         const img = document.createElement('img');
         img.src = canvas.toDataURL('image/jpeg', 0.8);
         img.className = 'chapter-photo';
@@ -241,6 +242,7 @@
         canvas.width = 0;
         canvas.height = 0;
 
+        console.log(`Страница ${pageNum} отрендерена за ${(performance.now() - startTime).toFixed(2)} мс`);
         return wrapper;
       } catch (err) {
         console.error(`Ошибка рендеринга страницы ${pageNum}:`, err);
@@ -248,128 +250,175 @@
       }
     }
 
-    async function fetchImages(site_url, cookie, user_id, title_id, chapter_number) {
-      const url = `${site_url}manga_chapter.php?cookie=${encodeURIComponent(cookie)}&user_id=${user_id}&title_id=${title_id}&chapter_number=${chapter_number}`;
+    async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
+      if (status !== 'success') {
+        updateLoadingStatus(status);
+        return;
+      }
+
       try {
-        updateLoadingStatus(null, '⏳ Получаем PDF...');
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Ошибка сети: ${response.status}`);
-        const buffer = await response.arrayBuffer();
-        pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
+        console.log('Начало загрузки PDF...');
+        const startTime = performance.now();
+        updateLoadingStatus(null, '⏳ Загрузка PDF...');
+
+        const response = await fetch(site_url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ cookie, user_id, title_id, chapter_number })
+        });
+
+        if (!response.ok) throw new Error(`HTTP ошибка: ${response.status} ${response.statusText}`);
+
+        const pdfBytes = await response.arrayBuffer();
+        console.log(`PDF загружен за ${(performance.now() - startTime).toFixed(2)} мс, размер: ${(pdfBytes.byteLength / 1024 / 1024).toFixed(2)} МБ`);
+
+        updateLoadingStatus(null, '⏳ Обработка PDF...');
+        pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
         total = pdfDoc.numPages;
-        if (total === 0) {
-          updateLoadingStatus('chapters_no', '🟣 Главы отсутствуют');
-          return;
-        }
-        updateLoadingStatus(null, `⏳ Документ загружен: ${total} страниц`);
-
         wrappers = [];
+        scrollable.innerHTML = '';
 
-        // Рендерим первую страницу
+        updateLoadingStatus(null, `⏳ Рендеринг страницы 1 из ${total}`);
         const firstWrapper = await renderPage(pdfDoc, 1);
         if (!firstWrapper) {
-          updateLoadingStatus('blocked', 'Ошибка при рендеринге первой страницы');
-          return;
+          throw new Error('Не удалось отрендерить первую страницу');
         }
+
         scrollable.appendChild(firstWrapper);
         wrappers.push(firstWrapper);
+        console.log('Первая страница добавлена в DOM');
 
-        // Показываем контейнер с фото и прячем загрузку
         loadingScreen.style.display = 'none';
         scrollable.style.display = 'flex';
+        updateThumb();
+        showPageIndicator();
 
-        // Обсервер для подгрузки страниц при прокрутке
+        // Настройка IntersectionObserver
         const observer = new IntersectionObserver(async (entries) => {
           for (const entry of entries) {
-            if (entry.isIntersecting) {
-              // Текущая последняя страница, которая отрисована
-              const currentPage = wrappers.length;
-              if (currentPage < total) {
-                const nextPage = currentPage + 1;
-                updateLoadingStatus(null, `⏳ Рендеринг страницы ${nextPage} из ${total}`);
-                const wrapper = await renderPage(pdfDoc, nextPage);
-                if (wrapper) {
-                  scrollable.appendChild(wrapper);
-                  wrappers.push(wrapper);
-                  console.log(`Страница ${nextPage} загружена`);
-
-                  // Отписываемся от старого элемента
-                  observer.unobserve(entry.target);
-                  // Наблюдаем за новым последним элементом
-                  observer.observe(wrapper);
-
-                  // Если загрузили все страницы - обновляем статус
-                  if (wrappers.length === total) {
-                    updateLoadingStatus('success', `🟢 Все ${total} страниц загружены`);
-                  }
-                }
+            if (entry.isIntersecting && wrappers.length < total) {
+              const nextPage = wrappers.length + 1;
+              updateLoadingStatus(null, `⏳ Рендеринг страницы ${nextPage} из ${total}`);
+              const wrapper = await renderPage(pdfDoc, nextPage);
+              if (wrapper) {
+                scrollable.appendChild(wrapper);
+                wrappers.push(wrapper);
+                observer.unobserve(entry.target); // Прекращаем наблюдение за предыдущей страницей
+                observer.observe(wrapper); // Наблюдаем за новой
+                console.log(`Страница ${nextPage} добавлена в DOM`);
               }
             }
           }
-        }, {
-          root: scrollable,
-          threshold: 0.1
-        });
+        }, { root: scrollable, threshold: 0.1 });
 
-        // Наблюдаем за первой страницей
-        observer.observe(wrappers[wrappers.length - 1]);
+        if (wrappers.length > 0) {
+          observer.observe(wrappers[wrappers.length - 1]);
+        }
 
-        // Обновляем индикатор страницы и трек при скролле
-        scrollable.addEventListener('scroll', () => {
-          if (!ticking) {
-            window.requestAnimationFrame(() => {
-              const scrollTop = scrollable.scrollTop;
-              const scrollHeight = scrollable.scrollHeight - scrollable.clientHeight;
-              const thumbHeight = Math.max(scrollable.clientHeight / scrollable.scrollHeight * track.clientHeight, 20);
-              const scrollPercent = scrollTop / scrollHeight;
-              const thumbPos = scrollPercent * (track.clientHeight - thumbHeight);
-
-              thumb.style.height = thumbHeight + 'px';
-              thumb.style.top = thumbPos + 'px';
-
-              // Показываем трек
-              track.style.opacity = '1';
-              clearTimeout(trackHideTimeout);
-              trackHideTimeout = setTimeout(() => {
-                track.style.opacity = '0';
-              }, 500);
-
-              // Определяем текущую видимую страницу
-              let visiblePageNum = 1;
-              for (let i = 0; i < wrappers.length; i++) {
-                const rect = wrappers[i].getBoundingClientRect();
-                if (rect.top >= 0 && rect.top < window.innerHeight * 0.8) {
-                  visiblePageNum = i + 1;
-                  break;
-                }
+        // Резервная загрузка через 10 секунд
+        setTimeout(async () => {
+          if (wrappers.length < total) {
+            console.log('Запуск резервной загрузки...');
+            while (wrappers.length < total) {
+              const nextPage = wrappers.length + 1;
+              updateLoadingStatus(null, `⏳ Резервная загрузка страницы ${nextPage} из ${total}`);
+              const wrapper = await renderPage(pdfDoc, nextPage);
+              if (wrapper) {
+                scrollable.appendChild(wrapper);
+                wrappers.push(wrapper);
+                observer.observe(wrapper);
+                console.log(`Резервная загрузка: страница ${nextPage} добавлена`);
               }
-
-              pageInd.textContent = `${visiblePageNum} / ${total}`;
-              pageInd.style.opacity = '1';
-              clearTimeout(indicatorHideTimeout);
-              indicatorHideTimeout = setTimeout(() => {
-                pageInd.style.opacity = '0';
-              }, 1000);
-
-              ticking = false;
-            });
-            ticking = true;
+              await new Promise(resolve => setTimeout(resolve, 200)); // Задержка для предотвращения перегрузки
+            }
+            updateLoadingStatus('success', `🟢 Все ${total} страниц загружены`);
           }
-        });
+        }, 10000);
 
-      } catch (error) {
-        console.error(error);
-        updateLoadingStatus('blocked', 'Ошибка при загрузке PDF');
+      } catch (err) {
+        console.error('Ошибка загрузки PDF:', err);
+        updateLoadingStatus(null, `🟡 Ошибка загрузки главы: ${err.message}`);
       }
     }
 
-    // Запускаем загрузку при готовности Telegram WebApp
-    Telegram.WebApp.ready();
+    function updateThumb() {
+      const scrollHeight = scrollable.scrollHeight - scrollable.clientHeight;
+      if (scrollHeight <= 0) {
+        thumb.style.height = `0px`;
+        return;
+      }
+      const trackHeight = track.clientHeight;
+      const thumbHeight = (scrollable.clientHeight / scrollable.scrollHeight) * trackHeight;
+      const thumbTop = (scrollable.scrollTop / scrollHeight) * trackHeight;
+      thumb.style.height = `${thumbHeight}px`;
+      thumb.style.top = `${thumbTop}px`;
+    }
 
-    const params = getUrlParams();
+    function currentIndex() {
+      const mid = window.innerHeight / 2;
+      for (let i = 0; i < wrappers.length; i++) {
+        const rect = wrappers[i].getBoundingClientRect();
+        if (rect.top <= mid && rect.bottom >= mid) return i + 1;
+      }
+      return 1;
+    }
 
-    // Запускаем
-    fetchImages(params.site_url, params.cookie, params.user_id, params.title_id, params.chapter_number);
+    function showPageIndicator() {
+      if (total === 0) return;
+      pageInd.textContent = `${currentIndex()} / ${total}`;
+      pageInd.style.opacity = 1;
+      clearTimeout(indicatorHideTimeout);
+      indicatorHideTimeout = setTimeout(() => { pageInd.style.opacity = 0; }, 1500);
+    }
+
+    scrollable.addEventListener('click', (e) => {
+      const rect = scrollable.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const h = scrollable.clientHeight;
+      if (y < h / 3) scrollable.scrollBy({ top: -h * 0.8, behavior: 'smooth' });
+      else if (y > 2 * h / 3) scrollable.scrollBy({ top: h * 0.8, behavior: 'smooth' });
+      else showPageIndicator();
+    });
+
+    scrollable.addEventListener('scroll', () => {
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          updateThumb();
+          showPageIndicator();
+          ticking = false;
+        });
+        ticking = true;
+      }
+      track.style.opacity = 1;
+      clearTimeout(trackHideTimeout);
+      trackHideTimeout = setTimeout(() => {
+        track.style.opacity = 0;
+      }, 800);
+    });
+
+    document.querySelectorAll('a').forEach(a => a.addEventListener('click', e => e.preventDefault()));
+
+    function init() {
+      Telegram.WebApp.ready();
+      Telegram.WebApp.disableVerticalSwipes();
+
+      updateLoadingStatus(null, '⏳ Проверка...');
+
+      const { site_url, cookie, user_id, title_id, chapter_number, status } = getUrlParams();
+      if (!site_url || !cookie || !user_id || !title_id || !chapter_number || !status) {
+        updateLoadingStatus(null, '🟡 Некорректные параметры');
+        return;
+      }
+
+      updateLoadingStatus(status);
+      if (status === 'success') {
+        fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
+      }
+    }
+
+    window.addEventListener('load', init);
   </script>
 </body>
 </html>

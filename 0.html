@@ -154,7 +154,7 @@
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    // Заглушка для Telegram Web App, если не в Telegram
+    // Заглушка для Telegram Web App
     if (!window.Telegram) {
       window.Telegram = {
         WebApp: {
@@ -215,30 +215,37 @@
     }
 
     async function renderPage(pdf, pageNum) {
-      const page = await pdf.getPage(pageNum);
-      const containerWidth = scrollable.clientWidth;
-      const scale = containerWidth / page.getViewport({ scale: 1 }).width; // Адаптивный масштаб
-      const viewport = page.getViewport({ scale: Math.min(scale, 1.0) });
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      try {
+        console.log(`Рендеринг страницы ${pageNum}`);
+        const page = await pdf.getPage(pageNum);
+        const containerWidth = scrollable.clientWidth;
+        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 1.0);
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
 
-      await page.render({ canvasContext: context, viewport }).promise;
+        await page.render({ canvasContext: context, viewport }).promise;
 
-      const wrapper = document.createElement('div');
-      const img = document.createElement('img');
-      img.src = canvas.toDataURL('image/jpeg', 0.8); // Используем JPEG с сжатием
-      img.className = 'chapter-photo';
-      img.alt = `Страница ${pageNum}`;
-      img.loading = 'lazy';
-      wrapper.appendChild(img);
+        const wrapper = document.createElement('div');
+        wrapper.dataset.pageNum = pageNum; // Для отслеживания страницы
+        const img = document.createElement('img');
+        img.src = canvas.toDataURL('image/jpeg', 0.8);
+        img.className = 'chapter-photo';
+        img.alt = `Страница ${pageNum}`;
+        img.loading = 'lazy';
+        wrapper.appendChild(img);
 
-      // Очистка canvas для освобождения памяти
-      canvas.width = 0;
-      canvas.height = 0;
+        // Очистка canvas
+        canvas.width = 0;
+        canvas.height = 0;
 
-      return wrapper;
+        return wrapper;
+      } catch (err) {
+        console.error(`Ошибка рендеринга страницы ${pageNum}:`, err);
+        return null;
+      }
     }
 
     async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
@@ -248,8 +255,7 @@
       }
 
       try {
-        updateLoadingStatus(null, '⏳ Загрузка главы...');
-
+        updateLoadingStatus(null, '⏳ Загрузка PDF...');
         const response = await fetch(site_url, {
           method: 'POST',
           headers: {
@@ -266,37 +272,67 @@
         wrappers = [];
         scrollable.innerHTML = '';
 
-        // Рендерим только первую страницу
+        updateLoadingStatus(null, `⏳ Рендеринг страницы 1 из ${total}`);
+
+        // Рендерим первую страницу
         const firstWrapper = await renderPage(pdfDoc, 1);
-        scrollable.appendChild(firstWrapper);
-        wrappers.push(firstWrapper);
+        if (firstWrapper) {
+          scrollable.appendChild(firstWrapper);
+          wrappers.push(firstWrapper);
+          console.log('Первая страница загружена');
+        } else {
+          throw new Error('Не удалось отрендерить первую страницу');
+        }
 
         loadingScreen.style.display = 'none';
         scrollable.style.display = 'flex';
         updateThumb();
         showPageIndicator();
 
-        // Настройка Intersection Observer для ленивой загрузки
-        const observer = new IntersectionObserver((entries) => {
-          entries.forEach(async (entry) => {
-            if (entry.isIntersecting && wrappers.length < total) {
-              const nextPage = wrappers.length + 1;
-              if (nextPage <= total) {
+        // Настройка IntersectionObserver
+        const observer = new IntersectionObserver(async (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              const currentPage = wrappers.length;
+              if (currentPage < total) {
+                const nextPage = currentPage + 1;
                 updateLoadingStatus(null, `⏳ Рендеринг страницы ${nextPage} из ${total}`);
                 const wrapper = await renderPage(pdfDoc, nextPage);
-                scrollable.appendChild(wrapper);
-                wrappers.push(wrapper);
-                updateThumb();
-                showPageIndicator();
+                if (wrapper) {
+                  scrollable.appendChild(wrapper);
+                  wrappers.push(wrapper);
+                  observer.observe(wrapper); // Наблюдаем за новой страницей
+                  console.log(`Страница ${nextPage} загружена`);
+                }
               }
             }
-          });
+          }
         }, { root: scrollable, threshold: 0.1 });
 
-        // Наблюдаем за последним элементом
-        observer.observe(wrappers[wrappers.length - 1]);
+        // Наблюдаем за первой страницей
+        if (wrappers.length > 0) {
+          observer.observe(wrappers[wrappers.length - 1]);
+        }
+
+        // Резервная загрузка, если страницы не загружаются
+        setTimeout(async () => {
+          while (wrappers.length < total) {
+            const nextPage = wrappers.length + 1;
+            updateLoadingStatus(null, `⏳ Рендеринг страницы ${nextPage} из ${total}`);
+            const wrapper = await renderPage(pdfDoc, nextPage);
+            if (wrapper) {
+              scrollable.appendChild(wrapper);
+              wrappers.push(wrapper);
+              observer.observe(wrapper);
+              console.log(`Резервная загрузка страницы ${nextPage}`);
+            }
+            await new Promise(resolve => setTimeout(resolve, 100)); // Небольшая задержка
+          }
+          updateLoadingStatus('success', `🟢 Все ${total} страниц загружены`);
+        }, 5000); // Запускаем резервную загрузку через 5 секунд
 
       } catch (err) {
+        console.error('Ошибка загрузки PDF:', err);
         updateLoadingStatus(null, `🟡 Ошибка загрузки главы: ${err.message}`);
       }
     }

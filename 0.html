@@ -9,6 +9,7 @@
       --box-bg: #ffffff;
       --accent-link-color: #0088cc;
     }
+
     body {
       font-family: Arial, sans-serif;
       margin: 0;
@@ -19,6 +20,7 @@
       align-items: center;
       min-height: 100vh;
     }
+
     .loading-wrapper {
       position: fixed;
       top: 50%;
@@ -37,20 +39,24 @@
       text-align: center;
       z-index: 9999;
     }
+
     .loading-logo {
       width: 96px;
       height: 96px;
       border-radius: 50%;
       object-fit: cover;
     }
+
     .loading-title {
       font-size: 20px;
       font-weight: bold;
     }
+
     .loading-extra {
       font-size: 14px;
       color: #555;
     }
+
     .loading-text {
       font-size: 16px;
       color: #555;
@@ -58,9 +64,11 @@
       margin-top: 12px;
       transition: color 0.3s ease;
     }
+
     .loading-text.success { color: green; }
     .loading-text.blocked { color: red; }
     .loading-text.chapters_no { color: #800080; }
+
     .photo-container {
       display: none;
       padding: 0 12px;
@@ -75,6 +83,7 @@
       box-sizing: border-box;
       margin: 16px 0;
     }
+
     .chapter-photo {
       display: block;
       margin: 0;
@@ -84,6 +93,7 @@
       -webkit-user-drag: none;
       pointer-events: none;
     }
+
     #scroll-track {
       position: fixed;
       right: 10px;
@@ -96,6 +106,7 @@
       transition: opacity 0.3s;
       z-index: 1000;
     }
+
     .thumb {
       position: absolute;
       width: 100%;
@@ -104,6 +115,7 @@
       top: 0;
       left: 0;
     }
+
     #page-indicator {
       position: fixed;
       bottom: 20px;
@@ -201,10 +213,9 @@
       }
     }
 
-    // Рендер одной страницы, возвращает Promise
-    async function renderPage(pdf, pageNum, scale = 0.7) {
+    async function renderPage(pdf, pageNum) {
       const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale });
+      const viewport = page.getViewport({ scale: 0.8 });
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       canvas.width = viewport.width;
@@ -217,19 +228,10 @@
       img.src = canvas.toDataURL('image/png');
       img.className = 'chapter-photo';
       img.alt = `Страница ${pageNum}`;
-      img.loading = 'lazy';  // ленивый загрузчик
+      img.loading = 'lazy';
       wrapper.appendChild(img);
-      scrollable.appendChild(wrapper);
-      wrappers.push(wrapper);
-    }
 
-    // Загружаем страницы пакетами (параллельно)
-    async function loadBatch(pdf, startPage, batchSize) {
-      const promises = [];
-      for (let i = startPage; i < startPage + batchSize && i <= total; i++) {
-        promises.push(renderPage(pdf, i));
-      }
-      await Promise.all(promises);
+      return wrapper;
     }
 
     async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
@@ -258,9 +260,17 @@
         wrappers = [];
         scrollable.innerHTML = '';
 
-        const batchSize = 3;  // параллельных страниц за раз
-        for (let pageNum = 1; pageNum <= total; pageNum += batchSize) {
-          await loadBatch(pdf, pageNum, batchSize);
+        const batchSize = 3;
+        for (let i = 1; i <= total; i += batchSize) {
+          const batchPromises = [];
+          for (let j = i; j < i + batchSize && j <= total; j++) {
+            batchPromises.push(renderPage(pdf, j));
+          }
+          const batchWrappers = await Promise.all(batchPromises);
+          batchWrappers.forEach(wrapper => {
+            scrollable.appendChild(wrapper);
+            wrappers.push(wrapper);
+          });
         }
 
         loadingScreen.style.display = 'none';
@@ -342,13 +352,12 @@
       }
 
       updateLoadingStatus(status);
-
       if (status === 'success') {
         fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
       }
     }
 
-    window.onload = init;
+    window.addEventListener('load', init);
   </script>
 </body>
 </html>

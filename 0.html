@@ -142,6 +142,20 @@
       font-weight: 600;
       font-size: 14px;
     }
+
+  .img-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+}
+
+.img-overlay {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  z-index: 10;
+  pointer-events: all;
+}
   </style>
 </head>
 <body>
@@ -224,52 +238,66 @@
       }
     }
 
-    async function renderPage(pdf, pageNum) {
-      try {
-        const page = await pdf.getPage(pageNum);
-        const containerWidth = scrollable.clientWidth || 300;
-        const defaultViewport = page.getViewport({ scale: 1 });
+async function renderPage(pdf, pageNum) {
+  try {
+    const page = await pdf.getPage(pageNum);
+    const containerWidth = scrollable.clientWidth || 300;
+    const defaultViewport = page.getViewport({ scale: 1 });
 
-        if (defaultViewport.width === 0 || defaultViewport.height === 0) {
-          return null;
-        }
-
-        const scale = Math.min(containerWidth / defaultViewport.width, 1.0);
-        const viewport = page.getViewport({ scale });
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-
-        const renderTask = page.render({ canvasContext: context, viewport });
-        await renderTask.promise;
-
-        const imgData = canvas.toDataURL('image/jpeg', 0.8);
-        if (!imgData.startsWith('data:image/jpeg') || imgData.length < 1000) {
-          return null;
-        }
-
-        const wrapper = document.createElement('div');
-        wrapper.dataset.pageNum = pageNum;
-        const img = document.createElement('img');
-        img.src = imgData;
-        img.className = 'chapter-photo';
-        img.alt = `Страница ${pageNum}`;
-        img.loading = 'lazy';
-        wrapper.appendChild(img);
-
-        canvas.width = 0;
-        canvas.height = 0;
-
-        img.onerror = () => {
-          wrapper.innerHTML = `<div class="error-placeholder">Не удалось загрузить страницу ${pageNum}</div>`;
-        };
-
-        return wrapper;
-      } catch (err) {
-        return null;
-      }
+    if (defaultViewport.width === 0 || defaultViewport.height === 0) {
+      return null;
     }
+
+    const scale = Math.min(containerWidth / defaultViewport.width, 1.0);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+
+    const renderTask = page.render({ canvasContext: context, viewport });
+    await renderTask.promise;
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.8);
+    if (!imgData.startsWith('data:image/jpeg') || imgData.length < 1000) {
+      return null;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.classList.add('img-wrapper');
+    wrapper.dataset.pageNum = pageNum;
+
+    const img = document.createElement('img');
+    img.src = imgData;
+    img.className = 'chapter-photo';
+    img.alt = `Страница ${pageNum}`;
+    img.loading = 'lazy';
+
+    // Защита
+    img.setAttribute('draggable', 'false');
+    img.setAttribute('oncontextmenu', 'return false');
+    img.setAttribute('onselectstart', 'return false');
+    img.setAttribute('onmousedown', 'return false');
+
+    // Прозрачный слой поверх
+    const overlay = document.createElement('div');
+    overlay.className = 'img-overlay';
+
+    wrapper.appendChild(img);
+    wrapper.appendChild(overlay);
+
+    canvas.width = 0;
+    canvas.height = 0;
+
+    img.onerror = () => {
+      wrapper.innerHTML = `<div class="error-placeholder">Не удалось загрузить страницу ${pageNum}</div>`;
+    };
+
+    return wrapper;
+  } catch (err) {
+    return null;
+  }
+}
 
     async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
       if (status !== 'success') {

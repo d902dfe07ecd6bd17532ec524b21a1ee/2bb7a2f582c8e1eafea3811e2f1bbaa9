@@ -227,7 +227,7 @@
 
         await page.render({ canvasContext: context, viewport }).promise;
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.7);
+        const imgData = canvas.toDataURL('image/jpeg', 1);
         console.log(`Размер data:URL для страницы ${pageNum}: ${(imgData.length / 1024).toFixed(2)} КБ`);
 
         if (!imgData.startsWith('data:image/jpeg')) {

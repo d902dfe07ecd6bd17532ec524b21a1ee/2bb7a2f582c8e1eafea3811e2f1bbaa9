@@ -150,204 +150,205 @@
   <div id="page-indicator"></div>
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="https://mozilla.github.io/pdf.js/build/pdf.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
-  <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://mozilla.github.io/pdf.js/build/pdf.worker.min.js';
-    if (!window.Telegram) {
-      window.Telegram = {
-        WebApp: {
-          ready: () => {},
-          disableVerticalSwipes: () => {},
-          MainButton: {
-            setText: () => {},
-            show: () => {},
-            onClick: () => {},
-            close: () => {}
-          },
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  if (!window.Telegram) {
+    window.Telegram = {
+      WebApp: {
+        ready: () => {},
+        disableVerticalSwipes: () => {},
+        MainButton: {
+          setText: () => {},
+          show: () => {},
+          onClick: () => {},
           close: () => {}
-        }
-      };
-    }
-
-    const loadingScreen = document.getElementById('loading-screen');
-    const loadingText = document.getElementById('loading-text');
-    const scrollable = document.getElementById('scrollable');
-    const track = document.getElementById('scroll-track');
-    const thumb = track.querySelector('.thumb');
-    const pageInd = document.getElementById('page-indicator');
-
-    let wrappers = [], total = 0, trackHideTimeout, indicatorHideTimeout, ticking = false;
-
-    function updateVh() {
-      document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
-    }
-    window.addEventListener('resize', updateVh);
-    updateVh();
-
-    function getUrlParams() {
-      const params = new URLSearchParams(window.location.search);
-      return {
-        site_url: params.get('site_url'),
-        cookie: params.get('cookie'),
-        user_id: params.get('user_id'),
-        title_id: params.get('title_id'),
-        chapter_number: params.get('chapter_number'),
-        status: params.get('status')
-      };
-    }
-
-    function updateLoadingStatus(status, customText) {
-      loadingText.className = 'loading-text';
-      if (status === 'success') {
-        loadingText.textContent = customText || '🟢 Успешно';
-        loadingText.classList.add('success');
-      } else if (status === 'blocked') {
-        loadingText.textContent = customText || '🔴 Вы заблокированы';
-        loadingText.classList.add('blocked');
-      } else if (status === 'chapters_no') {
-        loadingText.textContent = customText || '🟣 Главы отсутствуют';
-        loadingText.classList.add('chapters_no');
-      } else {
-        loadingText.textContent = customText || '🟡 Неизвестная ошибка';
+        },
+        close: () => {}
       }
+    };
+  }
+
+  const loadingScreen = document.getElementById('loading-screen');
+  const loadingText = document.getElementById('loading-text');
+  const scrollable = document.getElementById('scrollable');
+  const track = document.getElementById('scroll-track');
+  const thumb = track.querySelector('.thumb');
+  const pageInd = document.getElementById('page-indicator');
+
+  let wrappers = [], total = 0, trackHideTimeout, indicatorHideTimeout, ticking = false;
+
+  function updateVh() {
+    document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+  }
+  window.addEventListener('resize', updateVh);
+  updateVh();
+
+  function getUrlParams() {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      site_url: params.get('site_url'),
+      cookie: params.get('cookie'),
+      user_id: params.get('user_id'),
+      title_id: params.get('title_id'),
+      chapter_number: params.get('chapter_number'),
+      status: params.get('status')
+    };
+  }
+
+  function updateLoadingStatus(status, customText) {
+    loadingText.className = 'loading-text';
+    if (status === 'success') {
+      loadingText.textContent = customText || '🟢 Успешно';
+      loadingText.classList.add('success');
+    } else if (status === 'blocked') {
+      loadingText.textContent = customText || '🔴 Вы заблокированы';
+      loadingText.classList.add('blocked');
+    } else if (status === 'chapters_no') {
+      loadingText.textContent = customText || '🟣 Главы отсутствуют';
+      loadingText.classList.add('chapters_no');
+    } else {
+      loadingText.textContent = customText || '🟡 Неизвестная ошибка';
+    }
+  }
+
+  async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
+    if (status !== 'success') {
+      updateLoadingStatus(status);
+      return;
     }
 
-    async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
-      if (status !== 'success') {
-        updateLoadingStatus(status);
-        return;
+    try {
+      updateLoadingStatus(null, '⏳ Загрузка главы ...');
+
+      const response = await fetch(site_url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ cookie, user_id, title_id, chapter_number })
+      });
+
+      if (!response.ok) throw new Error();
+
+      const pdfBytes = await response.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+
+      total = pdf.numPages;
+      wrappers = [];
+      scrollable.innerHTML = '';
+
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 2 });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        await page.render({ canvasContext: context, viewport }).promise;
+
+        const wrapper = document.createElement('div');
+        const img = document.createElement('img');
+        img.src = canvas.toDataURL('image/png');
+        img.className = 'chapter-photo';
+        img.alt = `Страница ${pageNum}`;
+        wrapper.appendChild(img);
+        scrollable.appendChild(wrapper);
+        wrappers.push(wrapper);
       }
 
-      try {
-        updateLoadingStatus(null, '⏳ Загрузка главы ...');
+      loadingScreen.style.display = 'none';
+      scrollable.style.display = 'flex';
+      updateThumb();
+      showPageIndicator();
 
-        const response = await fetch(site_url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ cookie, user_id, title_id, chapter_number })
-        });
+    } catch (err) {
+      updateLoadingStatus(null, '🟡 Ошибка загрузки главы');
+    }
+  }
 
-        if (!response.ok) throw new Error();
+  function updateThumb() {
+    const scrollHeight = scrollable.scrollHeight - scrollable.clientHeight;
+    if (scrollHeight <= 0) {
+      thumb.style.height = `0px`;
+      return;
+    }
+    const trackHeight = track.clientHeight;
+    const thumbHeight = (scrollable.clientHeight / scrollable.scrollHeight) * trackHeight;
+    const thumbTop = (scrollable.scrollTop / scrollHeight) * trackHeight;
+    thumb.style.height = `${thumbHeight}px`;
+    thumb.style.top = `${thumbTop}px`;
+  }
 
-        const pdfBytes = await response.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+  function currentIndex() {
+    const mid = window.innerHeight / 2;
+    for (let i = 0; i < wrappers.length; i++) {
+      const rect = wrappers[i].getBoundingClientRect();
+      if (rect.top <= mid && rect.bottom >= mid) return i + 1;
+    }
+    return 1;
+  }
 
-        total = pdf.numPages;
-        wrappers = [];
-        scrollable.innerHTML = '';
+  function showPageIndicator() {
+    if (total === 0) return;
+    pageInd.textContent = `${currentIndex()} / ${total}`;
+    pageInd.style.opacity = 1;
+    clearTimeout(indicatorHideTimeout);
+    indicatorHideTimeout = setTimeout(() => { pageInd.style.opacity = 0; }, 1500);
+  }
 
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-          const page = await pdf.getPage(pageNum);
-          const viewport = page.getViewport({ scale: 2 });
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
+  scrollable.addEventListener('click', (e) => {
+    const rect = scrollable.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const h = scrollable.clientHeight;
+    if (y < h / 3) scrollable.scrollBy({ top: -h * 0.8, behavior: 'smooth' });
+    else if (y > 2 * h / 3) scrollable.scrollBy({ top: h * 0.8, behavior: 'smooth' });
+    else showPageIndicator();
+  });
 
-          await page.render({ canvasContext: context, viewport }).promise;
-
-          const wrapper = document.createElement('div');
-          const img = document.createElement('img');
-          img.src = canvas.toDataURL('image/png');
-          img.className = 'chapter-photo';
-          img.alt = `Страница ${pageNum}`;
-          wrapper.appendChild(img);
-          scrollable.appendChild(wrapper);
-          wrappers.push(wrapper);
-        }
-
-        loadingScreen.style.display = 'none';
-        scrollable.style.display = 'flex';
+  scrollable.addEventListener('scroll', () => {
+    if (!ticking) {
+      requestAnimationFrame(() => {
         updateThumb();
-        showPageIndicator();
-
-      } catch (err) {
-        updateLoadingStatus(null, '🟡 Ошибка загрузки главы');
-      }
+        ticking = false;
+      });
+      ticking = true;
     }
+    track.style.opacity = 1;
+    clearTimeout(trackHideTimeout);
+    trackHideTimeout = setTimeout(() => {
+      track.style.opacity = 0;
+    }, 800);
+  });
 
-    function updateThumb() {
-      const scrollHeight = scrollable.scrollHeight - scrollable.clientHeight;
-      if (scrollHeight <= 0) {
-        thumb.style.height = `0px`;
+  document.querySelectorAll('a').forEach(a => a.addEventListener('click', e => e.preventDefault()));
+
+  function init() {
+    Telegram.WebApp.ready();
+    Telegram.WebApp.disableVerticalSwipes();
+
+    updateLoadingStatus(null, '⏳ Проверка...');
+
+    setTimeout(() => {
+      const { site_url, cookie, user_id, title_id, chapter_number, status } = getUrlParams();
+      if (!site_url || !cookie || !user_id || !title_id || !chapter_number || !status) {
+        updateLoadingStatus(null, '🟡 Некорректные параметры');
         return;
       }
-      const trackHeight = track.clientHeight;
-      const thumbHeight = (scrollable.clientHeight / scrollable.scrollHeight) * trackHeight;
-      const thumbTop = (scrollable.scrollTop / scrollHeight) * trackHeight;
-      thumb.style.height = `${thumbHeight}px`;
-      thumb.style.top = `${thumbTop}px`;
-    }
 
-    function currentIndex() {
-      const mid = window.innerHeight / 2;
-      for (let i = 0; i < wrappers.length; i++) {
-        const rect = wrappers[i].getBoundingClientRect();
-        if (rect.top <= mid && rect.bottom >= mid) return i + 1;
+      updateLoadingStatus(status);
+      if (status === 'success') {
+        setTimeout(() => {
+          fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
+        }, 1000);
       }
-      return 1;
-    }
+    }, 3000);
+  }
 
-    function showPageIndicator() {
-      if (total === 0) return;
-      pageInd.textContent = `${currentIndex()} / ${total}`;
-      pageInd.style.opacity = 1;
-      clearTimeout(indicatorHideTimeout);
-      indicatorHideTimeout = setTimeout(() => { pageInd.style.opacity = 0; }, 1500);
-    }
-
-    scrollable.addEventListener('click', (e) => {
-      const rect = scrollable.getBoundingClientRect();
-      const y = e.clientY - rect.top;
-      const h = scrollable.clientHeight;
-      if (y < h / 3) scrollable.scrollBy({ top: -h * 0.8, behavior: 'smooth' });
-      else if (y > 2 * h / 3) scrollable.scrollBy({ top: h * 0.8, behavior: 'smooth' });
-      else showPageIndicator();
-    });
-
-    scrollable.addEventListener('scroll', () => {
-      if (!ticking) {
-        requestAnimationFrame(() => {
-          updateThumb();
-          ticking = false;
-        });
-        ticking = true;
-      }
-      track.style.opacity = 1;
-      clearTimeout(trackHideTimeout);
-      trackHideTimeout = setTimeout(() => {
-        track.style.opacity = 0;
-      }, 800);
-    });
-
-    document.querySelectorAll('a').forEach(a => a.addEventListener('click', e => e.preventDefault()));
-
-    function init() {
-      Telegram.WebApp.ready();
-      Telegram.WebApp.disableVerticalSwipes();
-
-      updateLoadingStatus(null, '⏳ Проверка...');
-
-      setTimeout(() => {
-        const { site_url, cookie, user_id, title_id, chapter_number, status } = getUrlParams();
-        if (!site_url || !cookie || !user_id || !title_id || !chapter_number || !status) {
-          updateLoadingStatus(null, '🟡 Некорректные параметры');
-          return;
-        }
-
-        updateLoadingStatus(status);
-        if (status === 'success') {
-          setTimeout(() => {
-            fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
-          }, 1000);
-        }
-      }, 3000);
-    }
-
-    document.addEventListener('DOMContentLoaded', init);
-  </script>
+  document.addEventListener('DOMContentLoaded', init);
+</script>
 </body>
 </html>

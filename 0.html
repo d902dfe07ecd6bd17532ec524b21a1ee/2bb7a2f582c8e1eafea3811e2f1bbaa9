@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>GojoMangaBot</title>
+  <style>
+    :root {
+      --box-bg: #ffffff;
+      --accent-link-color: #0088cc;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    /* --- Telegram-style loading card --- */
+    .loading-wrapper {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 320px;
+      max-width: 90%;
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
+      padding: 30px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      text-align: center;
+      z-index: 9999;
+    }
+
+    .loading-logo {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+
+    .loading-title {
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .loading-extra {
+      font-size: 14px;
+      color: #555;
+    }
+
+    .loading-text {
+      font-size: 16px;
+      color: #555;
+      font-weight: bold;
+      margin-top: 12px;
+      transition: color 0.3s ease;
+    }
+
+    .loading-text.success {
+      color: green;
+    }
+
+    .loading-text.blocked {
+      color: red;
+    }
+
+    .loading-text.chapters_no {
+      color: #800080  ;
+    }
+
+    /* --- Галерея --- */
+    .photo-container {
+      display: none; /* скрыта до загрузки */
+      padding: 0 12px;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      max-width: 600px;
+      padding: 10px;
+      overflow-y: auto;
+      height: calc(100 * var(--vh));
+      pointer-events: auto;
+      box-sizing: border-box;
+      margin: 16px 0;
+    }
+    .chapter-photo {
+      display: block;
+      margin: 0;
+      width: 100%;
+      max-width: 600px;
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: none;
+    }
+
+    #scroll-track {
+      position: fixed;
+      right: 10px;
+      top: 10px;
+      height: calc(100 * var(--vh) - 20px);
+      width: 6px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 3px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      z-index: 1000;
+    }
+    .thumb {
+      position: absolute;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      border-radius: 3px;
+      top: 0;
+      left: 0;
+    }
+
+    #page-indicator {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 5px 10px;
+      background: rgba(0, 0, 0, 0.5);
+      color: white;
+      border-radius: 5px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      user-select: none;
+      z-index: 1000;
+      font-weight: 600;
+      font-size: 14px;
+      font-family: Arial, sans-serif;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Заставка загрузки -->
+  <div class="loading-wrapper" id="loading-screen">
+    <img class="loading-logo" src="https://cdn4.cdn-telegram.org/file/VJsUqPLWZiucMadLzaEyH2fXS11bZ2hgTZQlUl-sWrmPpODM3CUM6Z4NtxsRtdVoTFtVmQW_dRh2zhb1aRdHcrqKv-wtuTWoejBFqH5e50Smqti2_9wpO9zPkcHOSZrNy1aRTKhMRUWlIKVr6c8BCe1w41lFH-wnfB2tEsR9XiYqnEAGEucU7I_LfnOKRpBtUz79t9-flwdOCMqH9iWb7pPWQ_oDOJzNApX3KsSc8BFvsTa51YyPeaOVhzmQ_KqiNM_368pAGsXAzTn7ZzdofrqtY4666jLVHl-lmgkFbprHFmIKElqd6luHuAhbBSav4ZamurKQzoNCAzcusBz13A.jpg" alt="Gojo Manga Bot" />
+    <div class="loading-title">Gojo Manga Bot</div>
+    <div class="loading-extra"><a href="https://t.me/GojoMangaBot" target="_blank" rel="noopener noreferrer">@GojoMangaBot</a></div>
+    <div class="loading-extra">🔰 Поддержка: <a href="https://t.me/mario_npc" target="_blank" rel="noopener noreferrer">@mario_npc</a></div>
+    <div class="loading-text" id="loading-text">⏳ Проверка...</div>
+  </div>
+
+  <!-- Галерея -->
+  <div id="scrollable" class="photo-container"></div>
+  <div id="scroll-track"><div class="thumb"></div></div>
+  <div id="page-indicator"></div>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    if (!window.Telegram) {
+      window.Telegram = {
+        WebApp: {
+          ready: () => {},
+          disableVerticalSwipes: () => {},
+          MainButton: {
+            setText: () => {},
+            show: () => {},
+            onClick: () => {},
+            close: () => {}
+          },
+          close: () => {}
+        }
+      };
+    }
+
+    const loadingScreen = document.getElementById('loading-screen');
+    const loadingText = document.getElementById('loading-text');
+    const scrollable = document.getElementById('scrollable');
+    const track = document.getElementById('scroll-track');
+    const thumb = track.querySelector('.thumb');
+    const pageInd = document.getElementById('page-indicator');
+
+    let wrappers = [];
+    let total = 0;
+    let trackHideTimeout = null;
+    let indicatorHideTimeout = null;
+    let ticking = false;
+
+    function updateVh() {
+      document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+    }
+    window.addEventListener('resize', updateVh);
+    updateVh();
+
+    // Получаем параметры из URL
+    function getUrlParams() {
+      const params = new URLSearchParams(window.location.search);
+      return {
+        site_url: params.get('site_url'),
+        cookie: params.get('cookie'),
+        user_id: params.get('user_id'),
+        title_id: params.get('title_id'),
+        chapter_number: params.get('chapter_number'),
+        status: params.get('status')
+      };
+    }
+
+    // Обновляем статус загрузки и класс
+    function updateLoadingStatus(status, customText) {
+      loadingText.className = 'loading-text';
+      if (status === 'success') {
+        loadingText.textContent = customText || '🟢 Успешно';
+        loadingText.classList.add('success');
+      } else if (status === 'blocked') {
+        loadingText.textContent = customText || '🔴 Вы заблокированы';
+        loadingText.classList.add('blocked');
+      } else if (status === 'chapters_no') {
+        loadingText.textContent = customText || '🟣 Главы отсутствуют';
+        loadingText.classList.add('chapters_no');
+      } else {
+        loadingText.textContent = customText || '🟡 Неизвестная ошибка';
+      }
+    }
+
+    async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
+      if (status !== 'success') {
+        updateLoadingStatus(status);
+        return;
+      }
+
+
+      try {
+        updateLoadingStatus(null, '⏳ Загрузка главы ...');
+
+      const response = await fetch(site_url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ cookie, user_id, title_id, chapter_number })
+      });
+
+        if (!response.ok) {
+          throw new Error();
+        }
+
+        const data = await response.json();
+
+        if (!data.photos || !Array.isArray(data.photos)) {
+          updateLoadingStatus('chapters_no');
+          return;
+        }
+
+        if (data.photos.length === 0) {
+          updateLoadingStatus('chapters_no');
+          return;
+        }
+
+        // Очистить и отобразить фото
+        scrollable.innerHTML = '';
+        wrappers = [];
+
+        data.photos.forEach(url => {
+          const wrapper = document.createElement('div');
+          const img = document.createElement('img');
+          img.src = url;
+          img.className = 'chapter-photo';
+          img.alt = 'Страница главы';
+          wrapper.appendChild(img);
+          scrollable.appendChild(wrapper);
+          wrappers.push(wrapper);
+        });
+
+        total = wrappers.length;
+
+        loadingScreen.style.display = 'none';
+        scrollable.style.display = 'flex';
+
+        updateThumb();
+        showPageIndicator();
+
+      } catch (error) {
+        updateLoadingStatus(null, '🟡 Ошибка загрузки главы');
+      }
+    }
+
+    function updateThumb() {
+      const scrollHeight = scrollable.scrollHeight - scrollable.clientHeight;
+      if (scrollHeight <= 0) {
+        thumb.style.height = `0px`;
+        return;
+      }
+      const trackHeight = track.clientHeight;
+      const thumbHeight = (scrollable.clientHeight / scrollable.scrollHeight) * trackHeight;
+      const thumbTop = (scrollable.scrollTop / scrollHeight) * trackHeight;
+
+      thumb.style.height = `${thumbHeight}px`;
+      thumb.style.top = `${thumbTop}px`;
+    }
+
+    function currentIndex() {
+      const mid = window.innerHeight / 2;
+      for (let i = 0; i < wrappers.length; i++) {
+        const rect = wrappers[i].getBoundingClientRect();
+        if (rect.top <= mid && rect.bottom >= mid) return i + 1;
+      }
+      return 1;
+    }
+
+    function showPageIndicator() {
+      if (total === 0) return;
+      pageInd.textContent = `${currentIndex()} / ${total}`;
+      pageInd.style.opacity = 1;
+      clearTimeout(indicatorHideTimeout);
+      indicatorHideTimeout = setTimeout(() => {
+        pageInd.style.opacity = 0;
+      }, 1500);
+    }
+
+    scrollable.addEventListener('click', (e) => {
+      const rect = scrollable.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const h = scrollable.clientHeight;
+
+      if (y < h / 3) {
+        scrollable.scrollBy({ top: -h * 0.8, behavior: 'smooth' });
+      } else if (y > 2 * h / 3) {
+        scrollable.scrollBy({ top: h * 0.8, behavior: 'smooth' });
+      } else {
+        showPageIndicator();
+      }
+    });
+
+    scrollable.addEventListener('scroll', () => {
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          updateThumb();
+          ticking = false;
+        });
+        ticking = true;
+      }
+      track.style.opacity = 1;
+      clearTimeout(trackHideTimeout);
+      trackHideTimeout = setTimeout(() => {
+        track.style.opacity = 0;
+      }, 800);
+    });
+
+  document.querySelectorAll('a').forEach(a => {
+    a.addEventListener('click', e => e.preventDefault());
+  });
+
+    
+function init() {
+  Telegram.WebApp.ready();
+  Telegram.WebApp.disableVerticalSwipes();
+
+  // ⏳ Сначала показываем "Проверка..." на 3 секунды
+  updateLoadingStatus(null, '⏳ Проверка...');
+
+  // Через 3 секунды — начинаем обработку параметров
+  setTimeout(() => {
+    const {site_url, cookie, user_id, title_id, chapter_number, status } = getUrlParams();
+
+    if (!site_url || !cookie || !user_id || !title_id || !chapter_number || !status) {
+      updateLoadingStatus(null, '🟡 Некорректные параметры');
+      return;
+    }
+
+    updateLoadingStatus(status);
+
+    if (status === 'success') {
+      setTimeout(() => {
+        fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
+      }, 1000);
+    }
+  }, 3000);
+}
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

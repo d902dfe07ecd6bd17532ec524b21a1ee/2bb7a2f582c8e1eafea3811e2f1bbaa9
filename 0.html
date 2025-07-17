@@ -79,7 +79,6 @@
       padding: 10px;
       overflow-y: auto;
       height: calc(100 * var(--vh));
-      pointer-events: auto;
       box-sizing: border-box;
       margin: 16px 0;
     }
@@ -91,7 +90,6 @@
       max-width: 600px;
       user-select: none;
       -webkit-user-drag: none;
-      pointer-events: none;
     }
 
     #scroll-track {
@@ -220,7 +218,7 @@
         const startTime = performance.now();
         const page = await pdf.getPage(pageNum);
         const containerWidth = scrollable.clientWidth;
-        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 0.8); // Уменьшенный масштаб для первой страницы
+        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 0.6); // Уменьшенный масштаб
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
@@ -229,10 +227,17 @@
 
         await page.render({ canvasContext: context, viewport }).promise;
 
+        const imgData = canvas.toDataURL('image/jpeg', 0.7);
+        console.log(`Размер data:URL для страницы ${pageNum}: ${(imgData.length / 1024).toFixed(2)} КБ`);
+
+        if (!imgData.startsWith('data:image/jpeg')) {
+          throw new Error(`Некорректный data:URL для страницы ${pageNum}`);
+        }
+
         const wrapper = document.createElement('div');
         wrapper.dataset.pageNum = pageNum;
         const img = document.createElement('img');
-        img.src = canvas.toDataURL('image/jpeg', 0.8);
+        img.src = imgData;
         img.className = 'chapter-photo';
         img.alt = `Страница ${pageNum}`;
         img.loading = 'lazy';
@@ -246,6 +251,7 @@
         return wrapper;
       } catch (err) {
         console.error(`Ошибка рендеринга страницы ${pageNum}:`, err);
+        updateLoadingStatus(null, `🟡 Ошибка рендеринга страницы ${pageNum}: ${err.message}`);
         return null;
       }
     }
@@ -295,6 +301,14 @@
         updateThumb();
         showPageIndicator();
 
+        // Проверка отображения первой страницы
+        const firstImg = firstWrapper.querySelector('img');
+        firstImg.onload = () => console.log('Первая страница успешно загружена в <img>');
+        firstImg.onerror = () => {
+          console.error('Ошибка загрузки изображения первой страницы');
+          updateLoadingStatus(null, '🟡 Ошибка отображения первой страницы');
+        };
+
         // Настройка IntersectionObserver
         const observer = new IntersectionObserver(async (entries) => {
           for (const entry of entries) {
@@ -305,8 +319,8 @@
               if (wrapper) {
                 scrollable.appendChild(wrapper);
                 wrappers.push(wrapper);
-                observer.unobserve(entry.target); // Прекращаем наблюдение за предыдущей страницей
-                observer.observe(wrapper); // Наблюдаем за новой
+                observer.unobserve(entry.target);
+                observer.observe(wrapper);
                 console.log(`Страница ${nextPage} добавлена в DOM`);
               }
             }
@@ -316,26 +330,6 @@
         if (wrappers.length > 0) {
           observer.observe(wrappers[wrappers.length - 1]);
         }
-
-        // Резервная загрузка через 10 секунд
-        setTimeout(async () => {
-          if (wrappers.length < total) {
-            console.log('Запуск резервной загрузки...');
-            while (wrappers.length < total) {
-              const nextPage = wrappers.length + 1;
-              updateLoadingStatus(null, `⏳ Резервная загрузка страницы ${nextPage} из ${total}`);
-              const wrapper = await renderPage(pdfDoc, nextPage);
-              if (wrapper) {
-                scrollable.appendChild(wrapper);
-                wrappers.push(wrapper);
-                observer.observe(wrapper);
-                console.log(`Резервная загрузка: страница ${nextPage} добавлена`);
-              }
-              await new Promise(resolve => setTimeout(resolve, 200)); // Задержка для предотвращения перегрузки
-            }
-            updateLoadingStatus('success', `🟢 Все ${total} страниц загружены`);
-          }
-        }, 10000);
 
       } catch (err) {
         console.error('Ошибка загрузки PDF:', err);

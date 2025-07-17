@@ -326,27 +326,24 @@
 
   document.querySelectorAll('a').forEach(a => a.addEventListener('click', e => e.preventDefault()));
 
-  function init() {
-    Telegram.WebApp.ready();
-    Telegram.WebApp.disableVerticalSwipes();
+function init() {
+  Telegram.WebApp.ready();
+  Telegram.WebApp.disableVerticalSwipes();
 
-    updateLoadingStatus(null, '⏳ Проверка...');
+  updateLoadingStatus(null, '⏳ Проверка...');
 
-    setTimeout(() => {
-      const { site_url, cookie, user_id, title_id, chapter_number, status } = getUrlParams();
-      if (!site_url || !cookie || !user_id || !title_id || !chapter_number || !status) {
-        updateLoadingStatus(null, '🟡 Некорректные параметры');
-        return;
-      }
-
-      updateLoadingStatus(status);
-      if (status === 'success') {
-        setTimeout(() => {
-          fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
-        }, 1000);
-      }
-    }, 3000);
+  const { site_url, cookie, user_id, title_id, chapter_number, status } = getUrlParams();
+  if (!site_url || !cookie || !user_id || !title_id || !chapter_number || !status) {
+    updateLoadingStatus(null, '🟡 Некорректные параметры');
+    return;
   }
+
+  updateLoadingStatus(status);
+  if (status === 'success') {
+    fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
+  }
+}
+
 
   document.addEventListener('DOMContentLoaded', init);
 </script>

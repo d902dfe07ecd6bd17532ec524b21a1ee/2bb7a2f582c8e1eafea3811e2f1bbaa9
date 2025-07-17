@@ -218,19 +218,29 @@
         const startTime = performance.now();
         const page = await pdf.getPage(pageNum);
         const containerWidth = scrollable.clientWidth;
-        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 0.6); // Уменьшенный масштаб
+        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 1.0); // Увеличенный масштаб
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
         canvas.width = viewport.width;
         canvas.height = viewport.height;
 
-        await page.render({ canvasContext: context, viewport }).promise;
+        console.log(`Размеры canvas для страницы ${pageNum}: ${canvas.width}x${canvas.height}`);
 
-        const imgData = canvas.toDataURL('image/jpeg', 1);
+        const renderTask = page.render({ canvasContext: context, viewport });
+        await renderTask.promise;
+
+        // Проверка, заполнен ли canvas
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        const isCanvasEmpty = Array.from(imageData).every(val => val === 0);
+        if (isCanvasEmpty) {
+          throw new Error(`Canvas для страницы ${pageNum} пустой`);
+        }
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.8);
         console.log(`Размер data:URL для страницы ${pageNum}: ${(imgData.length / 1024).toFixed(2)} КБ`);
 
-        if (!imgData.startsWith('data:image/jpeg')) {
+        if (!imgData.startsWith('data:image/jpeg') || imgData.length < 1000) {
           throw new Error(`Некорректный data:URL для страницы ${pageNum}`);
         }
 
@@ -246,6 +256,13 @@
         // Очистка canvas
         canvas.width = 0;
         canvas.height = 0;
+
+        // Проверка загрузки изображения
+        img.onload = () => console.log(`Изображение страницы ${pageNum} успешно загружено в <img>`);
+        img.onerror = () => {
+          console.error(`Ошибка загрузки изображения страницы ${pageNum}`);
+          updateLoadingStatus(null, `🟡 Ошибка отображения страницы ${pageNum}`);
+        };
 
         console.log(`Страница ${pageNum} отрендерена за ${(performance.now() - startTime).toFixed(2)} мс`);
         return wrapper;
@@ -287,27 +304,24 @@
         scrollable.innerHTML = '';
 
         updateLoadingStatus(null, `⏳ Рендеринг страницы 1 из ${total}`);
-        const firstWrapper = await renderPage(pdfDoc, 1);
+        let firstWrapper = await renderPage(pdfDoc, 1);
+        if (!firstWrapper && total > 1) {
+          console.log('Первая страница не отрендерилась, пробуем вторую...');
+          updateLoadingStatus(null, `⏳ Рендеринг страницы 2 из ${total}`);
+          firstWrapper = await renderPage(pdfDoc, 2);
+        }
         if (!firstWrapper) {
-          throw new Error('Не удалось отрендерить первую страницу');
+          throw new Error('Не удалось отрендерить начальную страницу');
         }
 
         scrollable.appendChild(firstWrapper);
         wrappers.push(firstWrapper);
-        console.log('Первая страница добавлена в DOM');
+        console.log('Начальная страница добавлена в DOM');
 
         loadingScreen.style.display = 'none';
         scrollable.style.display = 'flex';
         updateThumb();
         showPageIndicator();
-
-        // Проверка отображения первой страницы
-        const firstImg = firstWrapper.querySelector('img');
-        firstImg.onload = () => console.log('Первая страница успешно загружена в <img>');
-        firstImg.onerror = () => {
-          console.error('Ошибка загрузки изображения первой страницы');
-          updateLoadingStatus(null, '🟡 Ошибка отображения первой страницы');
-        };
 
         // Настройка IntersectionObserver
         const observer = new IntersectionObserver(async (entries) => {

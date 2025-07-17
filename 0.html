@@ -122,7 +122,7 @@
       left: 50%;
       transform: translateX(-50%);
       padding: 5px 10px;
-      background: rgba(0, 0, 0, 3);
+      background: rgba(0, 0, 0, 0.5);
       color: white;
       border-radius: 5px;
       opacity: 0;
@@ -137,7 +137,7 @@
 </head>
 <body>
   <div class="loading-wrapper" id="loading-screen">
-    <img class="loading-logo" src="https://cdn4.cdn-telegram.org/file/VJsUqPLWZiucMadLzaEyH2fXS11bZ2hgTZQlUl-sWrmPpODM3CUM6Z4NtxsRtdVoTFtVmQW_dRh2zhb1aRdHcrQEAGEucU7I_LfnOKRpBtUz79t9-flwdOCMqH9iWb7pPWQ_oDOJzNApX3KsSc8BFvsTa51YyPeaOVhzmQ_KqiNM_368pAGsXAzTn7ZzdofrqtY4666jLVHl-lmgkFbprHFmIKElqd6luHuAhbBSav4ZamurKQzoNCAzcusBz13A.jpg" />
+    <img class="loading-logo" src="https://cdn4.cdn-telegram.org/file/VJsUqPLWZiucMadLzaEyH2fXS11bZ2hgTZQlUl-sWrmPpODM3CUM6Z4NtxsRtdVoTFtVmQW_dRh2zhb1aRdHcrqKv-wtuTWoejBFqH5e50Smqti2_9wpO9zPkcHOSZrNy1aRTKhMRUWlIKVr6c8BCe1w41lFH-wnfB2tEsR9XiYqnEAGEucU7I_LfnOKRpBtUz79t9-flwdOCMqH9iWb7pPWQ_oDOJzNApX3KsSc8BFvsTa51YyPeaOVhzmQ_KqiNM_368pAGsXAzTn7ZzdofrqtY4666jLVHl-lmgkFbprHFmIKElqd6luHuAhbBSav4ZamurKQzoNCAzcusBz13A.jpg" />
     <div class="loading-title">Gojo Manga Bot</div>
     <div class="loading-extra"><a href="https://t.me/GojoMangaBot">@GojoMangaBot</a></div>
     <div class="loading-extra">🔰 Поддержка: <a href="https://t.me/mario_npc">@mario_npc</a></div>
@@ -154,7 +154,7 @@
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    // Заглушка для Telegram Web App, если не в Telegram
+    // Заглушка для Telegram Web App
     if (!window.Telegram) {
       window.Telegram = {
         WebApp: {
@@ -178,7 +178,7 @@
     const thumb = track.querySelector('.thumb');
     const pageInd = document.getElementById('page-indicator');
 
-    let wrappers = [], total = 0, trackHideTimeout, indicatorHideTimeout, ticking = false, pdfDoc = null, observer = null;
+    let wrappers = [], total = 0, trackHideTimeout, indicatorHideTimeout, ticking = false, pdfDoc = null;
 
     function updateVh() {
       document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
@@ -216,9 +216,10 @@
 
     async function renderPage(pdf, pageNum) {
       try {
+        console.log(`Рендеринг страницы ${pageNum}`);
         const page = await pdf.getPage(pageNum);
         const containerWidth = scrollable.clientWidth;
-        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 1.0); // Адаптивный масштаб
+        const scale = Math.min(containerWidth / page.getViewport({ scale: 1 }).width, 1.0);
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
@@ -230,11 +231,15 @@
         const wrapper = document.createElement('div');
         wrapper.dataset.pageNum = pageNum; // Для отслеживания страницы
         const img = document.createElement('img');
-        img.src = canvas.toDataURL('image/jpeg', 0.8); // JPEG с сжатием
+        img.src = canvas.toDataURL('image/jpeg', 0.8);
         img.className = 'chapter-photo';
         img.alt = `Страница ${pageNum}`;
         img.loading = 'lazy';
         wrapper.appendChild(img);
+
+        // Очистка canvas
+        canvas.width = 0;
+        canvas.height = 0;
 
         return wrapper;
       } catch (err) {
@@ -243,157 +248,128 @@
       }
     }
 
-    async function fetchImages(site_url, cookie, user_id, title_id, chapter_number, status) {
-      if (status !== 'success') {
-        updateLoadingStatus(status);
-        return;
-      }
-
+    async function fetchImages(site_url, cookie, user_id, title_id, chapter_number) {
+      const url = `${site_url}manga_chapter.php?cookie=${encodeURIComponent(cookie)}&user_id=${user_id}&title_id=${title_id}&chapter_number=${chapter_number}`;
       try {
-        updateLoadingStatus(null, '⏳ Загрузка главы...');
-
-        const response = await fetch(site_url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ cookie, user_id, title_id, chapter_number })
-        });
-
-        if (!response.ok) throw new Error(`HTTP ошибка: ${response.status}`);
-
-        const pdfBytes = await response.arrayBuffer();
-        pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+        updateLoadingStatus(null, '⏳ Получаем PDF...');
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Ошибка сети: ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
         total = pdfDoc.numPages;
+        if (total === 0) {
+          updateLoadingStatus('chapters_no', '🟣 Главы отсутствуют');
+          return;
+        }
+        updateLoadingStatus(null, `⏳ Документ загружен: ${total} страниц`);
+
         wrappers = [];
-        scrollable.innerHTML = '';
 
-        // Рендерим первую страницу сразу
-        updateLoadingStatus(null, `⏳ Рендеринг страницы 1 из ${total}`);
+        // Рендерим первую страницу
         const firstWrapper = await renderPage(pdfDoc, 1);
-        if (firstWrapper) {
-          scrollable.appendChild(firstWrapper);
-          scrollable.appendChild(firstWrapper);
-          wrappers.push(firstWrapper);
-        } else {
-          throw new Error('Не удалось отрендерить первую страницу');
+        if (!firstWrapper) {
+          updateLoadingStatus('blocked', 'Ошибка при рендеринге первой страницы');
+          return;
         }
+        scrollable.appendChild(firstWrapper);
+        wrappers.push(firstWrapper);
 
-        // Добавляем пустые контейнеры для остальных страниц (для корректной прокрутки)
-        for (let i = 2; i <= total; i++) {
-          const placeholder = document.createElement('div');
-          placeholder.dataset.pageNum = i;
-          placeholder.style.height = `${window.innerHeight}px`; // Примерная высота
-          scrollable.appendChild(placeholder);
-          wrappers.push(placeholder);
-        }
-
+        // Показываем контейнер с фото и прячем загрузку
         loadingScreen.style.display = 'none';
         scrollable.style.display = 'flex';
-        updateThumb();
-        showPageIndicator();
 
-        // Настройка IntersectionObserver
-        observer = new IntersectionObserver(async (entries) => {
+        // Обсервер для подгрузки страниц при прокрутке
+        const observer = new IntersectionObserver(async (entries) => {
           for (const entry of entries) {
             if (entry.isIntersecting) {
-              const pageNum = parseInt(entry.target.dataset.pageNum);
-              if (!entry.target.querySelector('img') && pageNum <= total) {
-                updateLoadingStatus(null, `⏳ Рендеринг страницы ${pageNum} из ${total}`);
-                const wrapper = await renderPage(pdfDoc, pageNum);
+              // Текущая последняя страница, которая отрисована
+              const currentPage = wrappers.length;
+              if (currentPage < total) {
+                const nextPage = currentPage + 1;
+                updateLoadingStatus(null, `⏳ Рендеринг страницы ${nextPage} из ${total}`);
+                const wrapper = await renderPage(pdfDoc, nextPage);
                 if (wrapper) {
-                  entry.target.replaceWith(wrapper);
-                  wrappers[pageNum - 1] = wrapper;
+                  scrollable.appendChild(wrapper);
+                  wrappers.push(wrapper);
+                  console.log(`Страница ${nextPage} загружена`);
+
+                  // Отписываемся от старого элемента
+                  observer.unobserve(entry.target);
+                  // Наблюдаем за новым последним элементом
+                  observer.observe(wrapper);
+
+                  // Если загрузили все страницы - обновляем статус
+                  if (wrappers.length === total) {
+                    updateLoadingStatus('success', `🟢 Все ${total} страниц загружены`);
+                  }
                 }
               }
             }
           }
-        }, { root: scrollable, threshold: 0.3, rootMargin: '100px' });
-
-        // Наблюдаем за всеми страницами
-        wrappers.forEach(wrapper => observer.observe(wrapper));
-
-      } catch (err) {
-        updateLoadingStatus(null, `🟡 Ошибка загрузки главы: ${err.message}`);
-      }
-    }
-
-    function updateThumb() {
-      const scrollHeight = scrollable.scrollHeight - scrollable.clientHeight;
-      if (scrollHeight <= 0) {
-        thumb.style.height = `0px`;
-        return;
-      }
-      const trackHeight = track.clientHeight;
-      const thumbHeight = (scrollable.clientHeight / scrollable.scrollHeight) * trackHeight;
-      const thumbTop = (scrollable.scrollTop / scrollHeight) * trackHeight;
-      thumb.style.height = `${thumbHeight}px`;
-      thumb.style.top = `${thumbTop}px`;
-    }
-
-    function currentIndex() {
-      const mid = window.innerHeight / 2;
-      for (let i = 0; i < wrappers.length; i++) {
-        const rect = wrappers[i].getBoundingClientRect();
-        if (rect.top <= mid && rect.bottom >= mid) return i + 1;
-      }
-      return 1;
-    }
-
-    function showPageIndicator() {
-      if (total === 0) return;
-      pageInd.textContent = `${currentIndex()} / ${total}`;
-      pageInd.style.opacity = 1;
-      clearTimeout(indicatorHideTimeout);
-      indicatorHideTimeout = setTimeout(() => { pageInd.style.opacity = 0; }, 1500);
-    }
-
-    scrollable.addEventListener('click', (e) => {
-      const rect = scrollable.getBoundingClientRect();
-      const y = e.clientY - rect.top;
-      const h = scrollable.clientHeight;
-      if (y < h / 3) scrollable.scrollBy({ top: -h * 0.8, behavior: 'smooth' });
-      else if (y > 2 * h / 3) scrollable.scrollBy({ top: h * 0.8, behavior: 'smooth' });
-      else showPageIndicator();
-    });
-
-    scrollable.addEventListener('scroll', () => {
-      if (!ticking) {
-        requestAnimationFrame(() => {
-          updateThumb();
-          showPageIndicator();
-          ticking = false;
+        }, {
+          root: scrollable,
+          threshold: 0.1
         });
-        ticking = true;
-      }
-      track.style.opacity = 1;
-      clearTimeout(trackHideTimeout);
-      trackHideTimeout = setTimeout(() => {
-        track.style.opacity = 0;
-      }, 800);
-    });
 
-    document.querySelectorAll('a').forEach(a => a.addEventListener('click', e => e.preventDefault()));
+        // Наблюдаем за первой страницей
+        observer.observe(wrappers[wrappers.length - 1]);
 
-    function init() {
-      Telegram.WebApp.ready();
-      Telegram.WebApp.disableVerticalSwipes();
+        // Обновляем индикатор страницы и трек при скролле
+        scrollable.addEventListener('scroll', () => {
+          if (!ticking) {
+            window.requestAnimationFrame(() => {
+              const scrollTop = scrollable.scrollTop;
+              const scrollHeight = scrollable.scrollHeight - scrollable.clientHeight;
+              const thumbHeight = Math.max(scrollable.clientHeight / scrollable.scrollHeight * track.clientHeight, 20);
+              const scrollPercent = scrollTop / scrollHeight;
+              const thumbPos = scrollPercent * (track.clientHeight - thumbHeight);
 
-      updateLoadingStatus(null, '⏳ Проверка...');
+              thumb.style.height = thumbHeight + 'px';
+              thumb.style.top = thumbPos + 'px';
 
-      const { site_url, cookie, user_id, title_id, chapter_number, status } = getUrlParams();
-      if (!site_url || !cookie || !user_id || !title_id || !chapter_number || !status) {
-        updateLoadingStatus(null, '🟡 Некорректные параметры');
-        return;
-      }
+              // Показываем трек
+              track.style.opacity = '1';
+              clearTimeout(trackHideTimeout);
+              trackHideTimeout = setTimeout(() => {
+                track.style.opacity = '0';
+              }, 500);
 
-      updateLoadingStatus(status);
-      if (status === 'success') {
-        fetchImages(site_url, cookie, user_id, title_id, chapter_number, status);
+              // Определяем текущую видимую страницу
+              let visiblePageNum = 1;
+              for (let i = 0; i < wrappers.length; i++) {
+                const rect = wrappers[i].getBoundingClientRect();
+                if (rect.top >= 0 && rect.top < window.innerHeight * 0.8) {
+                  visiblePageNum = i + 1;
+                  break;
+                }
+              }
+
+              pageInd.textContent = `${visiblePageNum} / ${total}`;
+              pageInd.style.opacity = '1';
+              clearTimeout(indicatorHideTimeout);
+              indicatorHideTimeout = setTimeout(() => {
+                pageInd.style.opacity = '0';
+              }, 1000);
+
+              ticking = false;
+            });
+            ticking = true;
+          }
+        });
+
+      } catch (error) {
+        console.error(error);
+        updateLoadingStatus('blocked', 'Ошибка при загрузке PDF');
       }
     }
 
-    window.addEventListener('load', init);
+    // Запускаем загрузку при готовности Telegram WebApp
+    Telegram.WebApp.ready();
+
+    const params = getUrlParams();
+
+    // Запускаем
+    fetchImages(params.site_url, params.cookie, params.user_id, params.title_id, params.chapter_number);
   </script>
 </body>
 </html>

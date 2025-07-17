@@ -89,7 +89,9 @@
       width: 100%;
       max-width: 600px;
       user-select: none;
+      -webkit-user-select: none;
       -webkit-user-drag: none;
+      pointer-events: none; /* Запрещаем клики и взаимодействия */
     }
 
     .error-placeholder {
@@ -97,6 +99,8 @@
       font-size: 16px;
       text-align: center;
       margin: 20px;
+      user-select: none;
+      -webkit-user-select: none;
     }
 
     #scroll-track {
@@ -298,7 +302,7 @@
           if (wrapper) {
             scrollable.appendChild(wrapper);
             wrappers.push(wrapper);
-            break; // Выходим после первой успешной страницы
+            break;
           }
           pageNum++;
         }
@@ -395,6 +399,25 @@
       trackHideTimeout = setTimeout(() => {
         track.style.opacity = 0;
       }, 800);
+    });
+
+    // Запрет копирования, перетаскивания и контекстного меню
+    document.addEventListener('contextmenu', (e) => {
+      if (e.target.classList.contains('chapter-photo') || e.target.classList.contains('error-placeholder')) {
+        e.preventDefault();
+      }
+    });
+
+    document.addEventListener('selectstart', (e) => {
+      if (e.target.classList.contains('chapter-photo') || e.target.classList.contains('error-placeholder')) {
+        e.preventDefault();
+      }
+    });
+
+    document.addEventListener('dragstart', (e) => {
+      if (e.target.classList.contains('chapter-photo')) {
+        e.preventDefault();
+      }
     });
 
     document.querySelectorAll('a').forEach(a => a.addEventListener('click', e => e.preventDefault()));
